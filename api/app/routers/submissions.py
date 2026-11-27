@@ -19,7 +19,7 @@ from app.models import (
     User,
 )
 from app.schemas import MentorCommentIn, SubmissionOut, UserOut
-from app.services import get_visible_node, node_ancestors
+from app.services import ensure_unlocked, get_visible_node, node_ancestors
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
 
@@ -70,7 +70,8 @@ async def create_submission(
     images: Annotated[list[UploadFile], File()],
     note: Annotated[str, Form(max_length=5000)] = "",
 ):
-    await get_visible_node(session, user, node_id)
+    node = await get_visible_node(session, user, node_id)
+    await ensure_unlocked(session, user, node)
     if not images or len(images) > MAX_IMAGES:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Attach 1-{MAX_IMAGES} screenshots")
 

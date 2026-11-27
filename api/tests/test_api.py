@@ -103,6 +103,9 @@ def test_course_access_is_per_course(client, world):
 def test_progress_and_completion(client, world):
     m, s, sid, c1 = world["m"], world["s"], world["mentee_id"], world["c1"]
     client.put(f"/roadmaps/{c1}/access/{sid}", headers=m)
+    done = lambda node_id, value=True: client.put(  # noqa: E731
+        f"/roadmaps/{c1}/nodes/{node_id}/done", json={"done": value, "mentee_id": sid}, headers=m
+    )
 
     _, top = nodes_by_title(client, s, c1)
     a = top["A"]
@@ -110,25 +113,30 @@ def test_progress_and_completion(client, world):
     _, a_kids = nodes_by_title(client, s, c1, a["id"])
     _, a1_kids = nodes_by_title(client, s, c1, a_kids["A1"]["id"])
 
-    # Mentee marks one leaf.
-    r = client.put(f"/roadmaps/{c1}/nodes/{a1_kids['A1a']['id']}/done", json={"done": True}, headers=s)
+    # Only the mentor marks topics done.
+    leaf = a1_kids["A1a"]["id"]
+    assert client.put(f"/roadmaps/{c1}/nodes/{leaf}/done", json={"done": True}, headers=s).status_code == 403
+    assert client.put(f"/roadmaps/{c1}/done", json={"done": True}, headers=s).status_code == 403
+    # ...and must say whose progress to change.
+    assert client.put(f"/roadmaps/{c1}/nodes/{leaf}/done", json={"done": True}, headers=m).status_code == 422
+
+    r = done(leaf)
     assert r.status_code == 200
     assert r.json()["roadmap"]["progress"]["done"] == 1
     _, top = nodes_by_title(client, s, c1)
     assert (top["A"]["leaves_done"], top["A"]["done"]) == (1, False)
 
     # Marking a parent marks its whole subtree.
-    client.put(f"/roadmaps/{c1}/nodes/{a['id']}/done", json={"done": True}, headers=s)
+    done(a["id"])
     _, top = nodes_by_title(client, s, c1)
     assert top["A"]["done"] is True and top["B"]["done"] is False
 
-    # Mentor sees the same progress, and must say whose progress to change.
-    d, top_m = nodes_by_title(client, m, c1, mentee_id=sid)
+    # Mentor sees the same progress for the chosen mentee; plain view has none.
+    d, _ = nodes_by_title(client, m, c1, mentee_id=sid)
     assert d["subject"]["id"] == sid
     assert d["roadmap"]["progress"]["percent"] == 67
     _, top_plain = nodes_by_title(client, m, c1)
-    assert top_plain["A"]["done"] is None
-    assert client.put(f"/roadmaps/{c1}/nodes/{a['id']}/done", json={"done": True}, headers=m).status_code == 422
+    assert top_plain["A"]["done"] is None and top_plain["A"]["locked"] is None
 
     # Mentor completes the course for the mentee -> everything is done.
     r = client.put(f"/roadmaps/{c1}/done", json={"done": True, "mentee_id": sid}, headers=m)
@@ -136,7 +144,7 @@ def test_progress_and_completion(client, world):
     assert (p["percent"], p["completed_at"] is not None) == (100, True)
 
     # Reopening a topic un-completes the course but keeps other topics.
-    client.put(f"/roadmaps/{c1}/nodes/{top['B']['id']}/done", json={"done": False}, headers=s)
+    done(top["B"]["id"], False)
     p = client.get("/roadmaps", headers=s).json()[0]["progress"]
     assert (p["done"], p["completed_at"]) == (2, None)
 
@@ -145,6 +153,49 @@ def test_progress_and_completion(client, world):
 
     # Can't view progress of a mentee without access.
     assert client.get(f"/roadmaps/{world['c2']}", headers=m, params={"mentee_id": sid}).status_code == 404
+
+
+def test_topics_unlock_in_order(client, world):
+    m, s, sid, c1 = world["m"], world["s"], world["mentee_id"], world["c1"]
+    client.put(f"/roadmaps/{c1}/access/{sid}", headers=m)
+    flags = lambda nodes: {t: (n["locked"], n["current"]) for t, n in nodes.items()}  # noqa: E731
+
+    # Course order is A1a, A1b, B: only the path to A1a is open at first.
+    _, top = nodes_by_title(client, s, c1)
+    assert flags(top) == {"A": (False, True), "B": (True, False)}
+    _, a_kids = nodes_by_title(client, s, c1, top["A"]["id"])
+    _, a1_kids = nodes_by_title(client, s, c1, a_kids["A1"]["id"])
+    assert flags(a1_kids) == {"A1a": (False, True), "A1b": (True, False)}
+
+    b = top["B"]["id"]
+    assert client.get(f"/roadmaps/{c1}/nodes/{b}", headers=s).status_code == 403
+    assert client.get(f"/roadmaps/{c1}/nodes/{a1_kids['A1b']['id']}", headers=s).status_code == 403
+    upload = lambda node_id: client.post(  # noqa: E731
+        "/submissions", data={"node_id": node_id}, files=[("images", ("s.png", PNG, "image/png"))], headers=s
+    )
+    assert upload(b).status_code == 403
+
+    # The mentor sees everything, with the mentee's locks shown for reference.
+    assert client.get(f"/roadmaps/{c1}/nodes/{b}", headers=m).status_code == 200
+    _, top_m = nodes_by_title(client, m, c1, mentee_id=sid)
+    assert flags(top_m) == flags(top)
+
+    # Completing A1a moves the mentee to A1b; completing all of A opens B.
+    client.put(f"/roadmaps/{c1}/nodes/{a1_kids['A1a']['id']}/done", json={"done": True, "mentee_id": sid}, headers=m)
+    _, a1_kids = nodes_by_title(client, s, c1, a_kids["A1"]["id"])
+    assert flags(a1_kids) == {"A1a": (False, False), "A1b": (False, True)}
+    assert upload(b).status_code == 403
+
+    client.put(f"/roadmaps/{c1}/nodes/{top['A']['id']}/done", json={"done": True, "mentee_id": sid}, headers=m)
+    _, top = nodes_by_title(client, s, c1)
+    assert flags(top) == {"A": (False, False), "B": (False, True)}
+    assert client.get(f"/roadmaps/{c1}/nodes/{b}", headers=s).status_code == 200
+    assert upload(b).status_code == 201
+
+    # Everything done: nothing is current, nothing is locked.
+    client.put(f"/roadmaps/{c1}/done", json={"done": True, "mentee_id": sid}, headers=m)
+    _, top = nodes_by_title(client, s, c1)
+    assert flags(top) == {"A": (False, False), "B": (False, False)}
 
 
 def test_submission_flow(client, world):

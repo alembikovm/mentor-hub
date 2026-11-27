@@ -15,10 +15,13 @@ api/  FastAPI + SQLAlchemy (async) + LangGraph + Anthropic SDK
 - **Invite codes + per-course access.** Mentees join a mentor with an invite code (a mentee can have
   several mentors). Joining shows nothing by itself: the mentor grants access course by course, from
   the mentee's page or the course's "Access & progress" table. Revoking keeps progress and submissions.
-- **Progress.** Topics are marked done by the mentee, or by the mentor on the mentee's behalf
-  (`?mentee=<id>` on any course page). Progress counts leaf topics; marking a section marks all of its
-  subtopics. A course can be marked completed (this also marks every topic done); reopening a topic
-  un-completes it. Both sides see progress bars on the dashboard, course and mentee pages.
+- **Progress, mentor-confirmed.** Only the mentor marks a mentee's topics done (`?mentee=<id>` on any
+  course page), typically after reviewing their solution. Progress counts leaf topics; marking a section
+  marks all of its subtopics. A course can be marked completed (this also marks every topic done);
+  reopening a topic un-completes it. Both sides see progress bars on the dashboard, course and mentee pages.
+- **Sequential unlocking.** Topics open in course order: a mentee can open the topics already done plus
+  the first one that isn't ("Up next"); later topics are locked (the API returns 403 for them, including
+  submissions) until the mentor marks the current one done.
 - **Roadmap upload.** Markdown or JSON with live tree preview. Headings and nested bullet lists become
   topics; text under an item becomes its description.
 - **Nested routes.** `/roadmaps/:id/:topic/:subtopic/...` — every level is its own page with breadcrumbs

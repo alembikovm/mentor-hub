@@ -30,6 +30,7 @@ from app.services import (
     build_nodes,
     completed_leaves,
     course_progress,
+    ensure_unlocked,
     get_my_mentee,
     get_visible_node,
     get_visible_roadmap,
@@ -78,6 +79,9 @@ async def _nodes_out(
     session, nodes: list[RoadmapNode], tree: Tree, done_leaves: set[str] | None
 ) -> list[NodeOut]:
     result = []
+    if done_leaves is not None:
+        current = tree.current_leaf(done_leaves)
+        unlocked = tree.unlocked_leaves(done_leaves)
     for n in nodes:
         o = NodeOut.model_validate(n)
         o.child_count = len(tree.children.get(n.id, []))
@@ -86,6 +90,8 @@ async def _nodes_out(
             o.leaves_total = len(leaves)
             o.leaves_done = len(leaves & done_leaves)
             o.done = o.leaves_done == o.leaves_total
+            o.locked = not (leaves & unlocked)
+            o.current = current in leaves
         result.append(o)
     return result
 
@@ -203,6 +209,7 @@ async def get_node(
     node = await get_visible_node(session, user, node_id)
     if node.roadmap_id != roadmap_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
+    await ensure_unlocked(session, user, node)
     roadmap = await session.get(Roadmap, roadmap_id)
     return await _detail(session, user, roadmap, node, mentee_id)
 
@@ -269,8 +276,8 @@ async def _subject_or_400(session, user: User, roadmap: Roadmap, mentee_id: str 
 
 
 @router.put("/{roadmap_id}/nodes/{node_id}/done", response_model=NodeDetail)
-async def mark_topic(roadmap_id: str, node_id: str, body: DoneIn, user: CurrentUser, session: DB):
-    """Mark a topic (and every subtopic under it) done or not done."""
+async def mark_topic(roadmap_id: str, node_id: str, body: DoneIn, user: Mentor, session: DB):
+    """Mark a mentee's topic (and every subtopic under it) done or not done. Mentor only."""
     node = await get_visible_node(session, user, node_id)
     if node.roadmap_id != roadmap_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Topic not found")
@@ -284,8 +291,8 @@ async def mark_topic(roadmap_id: str, node_id: str, body: DoneIn, user: CurrentU
 
 
 @router.put("/{roadmap_id}/done", response_model=NodeDetail)
-async def mark_course(roadmap_id: str, body: DoneIn, user: CurrentUser, session: DB):
-    """Completing a course also marks all of its remaining topics done."""
+async def mark_course(roadmap_id: str, body: DoneIn, user: Mentor, session: DB):
+    """Completing a course also marks all of its remaining topics done. Mentor only."""
     roadmap = await get_visible_roadmap(session, user, roadmap_id)
     subject = await _subject_or_400(session, user, roadmap, body.mentee_id)
     if body.done:

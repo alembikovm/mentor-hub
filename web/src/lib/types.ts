@@ -40,6 +40,9 @@ export interface TopicNode {
   done: boolean | null;
   leaves_done: number | null;
   leaves_total: number | null;
+  // Sequential unlocking (present when a mentee's progress is shown).
+  locked: boolean | null;
+  current: boolean | null;
 }
 
 export interface NodeDetail {

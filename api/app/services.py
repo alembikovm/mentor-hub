@@ -6,7 +6,12 @@ Visibility:
     granted access to that course.
 
 Progress is tracked on leaf topics. A parent topic is done when every leaf
-below it is done; marking a parent marks all leaves in its subtree.
+below it is done; marking a parent marks all leaves in its subtree. Only the
+mentor marks topics done.
+
+Topics unlock in order: a mentee can open the leaves already done plus the
+first leaf that isn't (the "current" topic). A section is open when anything
+inside it is open.
 """
 
 from __future__ import annotations
@@ -138,7 +143,30 @@ async def node_ancestors(session: AsyncSession, node: RoadmapNode) -> list[Roadm
 
 @dataclass
 class Tree:
-    children: dict[str | None, list[str]]
+    children: dict[str | None, list[str]]  # ordered by position
+
+    def ordered_leaves(self) -> list[str]:
+        out: list[str] = []
+        stack = list(reversed(self.children.get(None, [])))
+        while stack:
+            nid = stack.pop()
+            sub = self.children.get(nid, [])
+            if sub:
+                stack.extend(reversed(sub))
+            else:
+                out.append(nid)
+        return out
+
+    def current_leaf(self, done: set[str]) -> str | None:
+        """First leaf in course order that isn't done (None when all are)."""
+        return next((leaf for leaf in self.ordered_leaves() if leaf not in done), None)
+
+    def unlocked_leaves(self, done: set[str]) -> set[str]:
+        current = self.current_leaf(done)
+        return done | ({current} if current else set())
+
+    def is_unlocked(self, node_id: str, done: set[str]) -> bool:
+        return bool(self.leaves_under(node_id) & self.unlocked_leaves(done))
 
     def leaves_under(self, node_id: str | None) -> set[str]:
         """Leaf ids in the subtree of node_id (a leaf is its own subtree). None = whole course."""
@@ -159,7 +187,9 @@ class Tree:
 
 async def load_tree(session: AsyncSession, roadmap_id: str) -> Tree:
     rows = await session.execute(
-        select(RoadmapNode.id, RoadmapNode.parent_id).where(RoadmapNode.roadmap_id == roadmap_id)
+        select(RoadmapNode.id, RoadmapNode.parent_id)
+        .where(RoadmapNode.roadmap_id == roadmap_id)
+        .order_by(RoadmapNode.position)
     )
     children: dict[str | None, list[str]] = {}
     for nid, pid in rows:
@@ -189,6 +219,22 @@ def build_nodes(roadmap_id: str, nodes: list[ParsedNode]) -> list[RoadmapNode]:
 
 
 # ---------------------------------------------------------------- progress
+
+
+def locked_error() -> HTTPException:
+    return HTTPException(
+        status.HTTP_403_FORBIDDEN, "This topic is locked until your mentor marks the previous ones done"
+    )
+
+
+async def ensure_unlocked(session: AsyncSession, user: User, node: RoadmapNode) -> None:
+    """Mentees can't open or submit to topics they haven't reached yet."""
+    if user.role != Role.mentee:
+        return
+    tree = await load_tree(session, node.roadmap_id)
+    done = await completed_leaves(session, user.id, node.roadmap_id)
+    if not tree.is_unlocked(node.id, done):
+        raise locked_error()
 
 
 async def completed_leaves(session: AsyncSession, mentee_id: str, roadmap_id: str) -> set[str]:

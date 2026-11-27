@@ -8,7 +8,7 @@ import { SubmissionForm } from "@/components/submission-form";
 import { SubmissionList } from "@/components/submission-list";
 import { AccessSwitch, DoneButton, DoneCheckbox } from "@/components/toggles";
 import { EmptyState, PageSkeleton } from "@/components/ui";
-import { api, apiOr404, requireMe } from "@/lib/api";
+import { ApiError, api, apiOr404, requireMe } from "@/lib/api";
 import type { CourseMember, NodeDetail, Submission, TopicNode } from "@/lib/types";
 
 type Props = PageProps<"/roadmaps/[roadmapId]/[[...path]]">;
@@ -21,6 +21,43 @@ type Props = PageProps<"/roadmaps/[roadmapId]/[[...path]]">;
 function makeHref(roadmapId: string, menteeId?: string) {
   const qs = menteeId ? `?mentee=${menteeId}` : "";
   return (chain: TopicNode[]) => `/roadmaps/${roadmapId}${chain.map((n) => `/${n.id}`).join("")}${qs}`;
+}
+
+/** Read-only topic status for the mentee: done, up next, in progress, or locked. */
+function TopicStatus({ node }: { node: TopicNode }) {
+  const base = "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]";
+  if (node.done) return <span className={`${base} bg-emerald-500 text-white`} title="Done">✓</span>;
+  if (node.locked)
+    return (
+      <span className={`${base} text-stone-400`} title="Locked">
+        <LockIcon />
+      </span>
+    );
+  if (node.current) return <span className={`${base} border-2 border-indigo-500 bg-indigo-50`} title="Up next" />;
+  return <span className={`${base} border-2 border-indigo-300 text-indigo-500`} title="In progress">–</span>;
+}
+
+function LockIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="currentColor" className={className} aria-hidden>
+      <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 4 15h8a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm2 5V4.5a2 2 0 1 0-4 0V6h4Z" />
+    </svg>
+  );
+}
+
+function LockedTopic({ roadmapId }: { roadmapId: string }) {
+  return (
+    <div className="card mx-auto mt-10 max-w-md p-8 text-center">
+      <LockIcon className="mx-auto h-8 w-8 text-stone-400" />
+      <h1 className="mt-4 text-lg font-semibold">This topic is locked</h1>
+      <p className="mt-2 text-sm text-stone-600">
+        It opens once your mentor marks the previous topics done.
+      </p>
+      <Link href={`/roadmaps/${roadmapId}`} className="btn-secondary mt-6 inline-flex">
+        Back to the course
+      </Link>
+    </div>
+  );
 }
 
 async function MembersTable({ roadmapId }: { roadmapId: string }) {
@@ -67,9 +104,15 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
 
   const nodeId = path.at(-1);
   const qs = menteeParam ? `?mentee_id=${menteeParam}` : "";
-  const detail = await apiOr404<NodeDetail>(
-    (nodeId ? `/roadmaps/${roadmapId}/nodes/${nodeId}` : `/roadmaps/${roadmapId}`) + qs,
-  );
+  let detail: NodeDetail;
+  try {
+    detail = await apiOr404<NodeDetail>(
+      (nodeId ? `/roadmaps/${roadmapId}/nodes/${nodeId}` : `/roadmaps/${roadmapId}`) + qs,
+    );
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) return <LockedTopic roadmapId={roadmapId} />;
+    throw e;
+  }
   const { roadmap, node, ancestors, children, subject } = detail;
   const href = makeHref(roadmapId, menteeParam);
 
@@ -78,7 +121,9 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
   if (chain.map((n) => n.id).join("/") !== path.join("/")) redirect(href(chain));
 
   // Progress is shown for the mentee themself, or for the mentee a mentor picked.
+  // Only the mentor marks topics done; the mentee sees read-only statuses.
   const tracking = !!subject;
+  const canMark = isMentor && tracking;
   const subjectId = isMentor ? subject?.id : undefined;
 
   const submissions = node
@@ -139,25 +184,41 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
             <div className="min-w-56 flex-1">
               <ProgressBar progress={roadmap.progress} />
             </div>
-            <DoneButton
-              roadmapId={roadmapId}
-              nodeId={null}
-              done={!!roadmap.progress.completed_at}
-              menteeId={subjectId}
-              labels={["Mark course completed", "Course completed — undo"]}
-            />
+            {canMark ? (
+              <DoneButton
+                roadmapId={roadmapId}
+                nodeId={null}
+                done={!!roadmap.progress.completed_at}
+                menteeId={subjectId}
+                labels={["Mark course completed", "Course completed — undo"]}
+              />
+            ) : (
+              !roadmap.progress.completed_at && (
+                <p className="text-sm text-stone-500">Your mentor marks topics done after reviewing your work.</p>
+              )
+            )}
           </div>
         )}
 
         {tracking && node && (
           <div className="flex flex-wrap items-center gap-4">
-            <DoneButton
-              roadmapId={roadmapId}
-              nodeId={node.id}
-              done={!!node.done}
-              menteeId={subjectId}
-              labels={node.child_count ? ["Mark section done", "Section done — undo"] : undefined}
-            />
+            {canMark ? (
+              <DoneButton
+                roadmapId={roadmapId}
+                nodeId={node.id}
+                done={!!node.done}
+                menteeId={subjectId}
+                labels={node.child_count ? ["Mark section done", "Section done — undo"] : undefined}
+              />
+            ) : node.done ? (
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-800">
+                ✓ Done — confirmed by your mentor
+              </span>
+            ) : (
+              <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-800">
+                In progress — your mentor marks it done after reviewing your solution
+              </span>
+            )}
             {node.child_count > 0 && (
               <span className="text-sm text-stone-500">
                 {node.leaves_done}/{node.leaves_total} topics in this section done
@@ -173,23 +234,22 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
             {node ? "Subtopics" : "Topics"}
           </h2>
           <ol className="card divide-y divide-stone-100">
-            {children.map((c, i) => (
-              <li key={c.id} className="flex items-center gap-3 pl-4">
-                {tracking ? (
-                  <DoneCheckbox
-                    roadmapId={roadmapId}
-                    nodeId={c.id}
-                    done={!!c.done}
-                    partial={!!c.leaves_done && !c.done}
-                    menteeId={subjectId}
-                  />
-                ) : (
-                  <span className="w-5 text-right font-mono text-xs text-stone-400">{i + 1}</span>
-                )}
-                <Link href={href([...chain, c])} className="group flex min-w-0 flex-1 items-center gap-4 py-3 pr-4">
+            {children.map((c, i) => {
+              const body = (
+                <>
                   <div className="min-w-0 flex-1">
-                    <div className={`font-medium group-hover:text-indigo-700 ${c.done ? "text-stone-500" : ""}`}>
-                      {c.title}
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${c.locked ? "" : "group-hover:text-indigo-700"} ${c.done ? "text-stone-500" : ""}`}>
+                        {c.title}
+                      </span>
+                      {c.current && (
+                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">Up next</span>
+                      )}
+                      {c.locked && isMentor && (
+                        <span className="text-stone-400" title="Locked for the mentee">
+                          <LockIcon className="h-3 w-3" />
+                        </span>
+                      )}
                     </div>
                     {c.description && <p className="truncate text-sm text-stone-500">{c.description}</p>}
                   </div>
@@ -198,10 +258,38 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
                       {tracking ? `${c.leaves_done}/${c.leaves_total}` : `${c.child_count} subtopic${c.child_count === 1 ? "" : "s"}`}
                     </span>
                   )}
-                  <span className="text-stone-400 group-hover:text-indigo-600">→</span>
-                </Link>
-              </li>
-            ))}
+                </>
+              );
+              // Mentees can't open topics they haven't reached; mentors can open everything.
+              const blocked = !isMentor && !!c.locked;
+              return (
+                <li key={c.id} className={`flex items-center gap-3 pl-4 ${blocked ? "bg-stone-50/60" : ""}`}>
+                  {canMark ? (
+                    <DoneCheckbox
+                      roadmapId={roadmapId}
+                      nodeId={c.id}
+                      done={!!c.done}
+                      partial={!!c.leaves_done && !c.done}
+                      menteeId={subjectId}
+                    />
+                  ) : tracking ? (
+                    <TopicStatus node={c} />
+                  ) : (
+                    <span className="w-5 text-right font-mono text-xs text-stone-400">{i + 1}</span>
+                  )}
+                  {blocked ? (
+                    <div className="flex min-w-0 flex-1 cursor-not-allowed items-center gap-4 py-3 pr-4 text-stone-400" title="Locked until your mentor marks the previous topics done">
+                      {body}
+                    </div>
+                  ) : (
+                    <Link href={href([...chain, c])} className="group flex min-w-0 flex-1 items-center gap-4 py-3 pr-4">
+                      {body}
+                      <span className="text-stone-400 group-hover:text-indigo-600">→</span>
+                    </Link>
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </section>
       )}
