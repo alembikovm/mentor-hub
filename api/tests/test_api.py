@@ -160,16 +160,16 @@ def test_topics_unlock_in_order(client, world):
     client.put(f"/roadmaps/{c1}/access/{sid}", headers=m)
     flags = lambda nodes: {t: (n["locked"], n["current"]) for t, n in nodes.items()}  # noqa: E731
 
-    # Course order is A1a, A1b, B: only the path to A1a is open at first.
+    # Sections are A then B: only A is open, but everything inside A is.
     _, top = nodes_by_title(client, s, c1)
     assert flags(top) == {"A": (False, True), "B": (True, False)}
     _, a_kids = nodes_by_title(client, s, c1, top["A"]["id"])
     _, a1_kids = nodes_by_title(client, s, c1, a_kids["A1"]["id"])
-    assert flags(a1_kids) == {"A1a": (False, True), "A1b": (True, False)}
+    assert flags(a1_kids) == {"A1a": (False, False), "A1b": (False, False)}
+    assert client.get(f"/roadmaps/{c1}/nodes/{a1_kids['A1b']['id']}", headers=s).status_code == 200
 
     b = top["B"]["id"]
     assert client.get(f"/roadmaps/{c1}/nodes/{b}", headers=s).status_code == 403
-    assert client.get(f"/roadmaps/{c1}/nodes/{a1_kids['A1b']['id']}", headers=s).status_code == 403
     upload = lambda node_id: client.post(  # noqa: E731
         "/submissions", data={"node_id": node_id}, files=[("images", ("s.png", PNG, "image/png"))], headers=s
     )
@@ -180,10 +180,10 @@ def test_topics_unlock_in_order(client, world):
     _, top_m = nodes_by_title(client, m, c1, mentee_id=sid)
     assert flags(top_m) == flags(top)
 
-    # Completing A1a moves the mentee to A1b; completing all of A opens B.
+    # Part of A done: B stays locked. All of A done: B opens.
     client.put(f"/roadmaps/{c1}/nodes/{a1_kids['A1a']['id']}/done", json={"done": True, "mentee_id": sid}, headers=m)
-    _, a1_kids = nodes_by_title(client, s, c1, a_kids["A1"]["id"])
-    assert flags(a1_kids) == {"A1a": (False, False), "A1b": (False, True)}
+    _, top = nodes_by_title(client, s, c1)
+    assert flags(top) == {"A": (False, True), "B": (True, False)}
     assert upload(b).status_code == 403
 
     client.put(f"/roadmaps/{c1}/nodes/{top['A']['id']}/done", json={"done": True, "mentee_id": sid}, headers=m)

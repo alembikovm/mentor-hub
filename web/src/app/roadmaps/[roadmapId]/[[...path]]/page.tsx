@@ -34,7 +34,8 @@ function TopicStatus({ node }: { node: TopicNode }) {
       </span>
     );
   if (node.current) return <span className={`${base} border-2 border-indigo-500 bg-indigo-50`} title="Up next" />;
-  return <span className={`${base} border-2 border-indigo-300 text-indigo-500`} title="In progress">–</span>;
+  if (node.leaves_done) return <span className={`${base} border-2 border-indigo-300 text-indigo-500`} title="In progress">–</span>;
+  return <span className={`${base} border-2 border-stone-300`} title="Not done yet" />;
 }
 
 function LockIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
@@ -51,7 +52,7 @@ function LockedTopic({ roadmapId }: { roadmapId: string }) {
       <LockIcon className="mx-auto h-8 w-8 text-stone-400" />
       <h1 className="mt-4 text-lg font-semibold">This topic is locked</h1>
       <p className="mt-2 text-sm text-stone-600">
-        It opens once your mentor marks the previous topics done.
+        This section opens once your mentor marks the previous one done.
       </p>
       <Link href={`/roadmaps/${roadmapId}`} className="btn-secondary mt-6 inline-flex">
         Back to the course
@@ -278,7 +279,7 @@ async function TopicPage({ params, searchParams }: Pick<Props, "params" | "searc
                     <span className="w-5 text-right font-mono text-xs text-stone-400">{i + 1}</span>
                   )}
                   {blocked ? (
-                    <div className="flex min-w-0 flex-1 cursor-not-allowed items-center gap-4 py-3 pr-4 text-stone-400" title="Locked until your mentor marks the previous topics done">
+                    <div className="flex min-w-0 flex-1 cursor-not-allowed items-center gap-4 py-3 pr-4 text-stone-400" title="Opens once your mentor marks the previous section done">
                       {body}
                     </div>
                   ) : (

@@ -9,9 +9,9 @@ Progress is tracked on leaf topics. A parent topic is done when every leaf
 below it is done; marking a parent marks all leaves in its subtree. Only the
 mentor marks topics done.
 
-Topics unlock in order: a mentee can open the leaves already done plus the
-first leaf that isn't (the "current" topic). A section is open when anything
-inside it is open.
+Top-level sections unlock in order: a mentee can open the sections already
+started or done plus the first one that isn't fully done (the "current"
+section). Everything inside an open section is open.
 """
 
 from __future__ import annotations
@@ -145,28 +145,24 @@ async def node_ancestors(session: AsyncSession, node: RoadmapNode) -> list[Roadm
 class Tree:
     children: dict[str | None, list[str]]  # ordered by position
 
-    def ordered_leaves(self) -> list[str]:
-        out: list[str] = []
-        stack = list(reversed(self.children.get(None, [])))
-        while stack:
-            nid = stack.pop()
-            sub = self.children.get(nid, [])
-            if sub:
-                stack.extend(reversed(sub))
-            else:
-                out.append(nid)
-        return out
+    def top_of(self, node_id: str) -> str:
+        """The top-level section a node belongs to."""
+        parent = {c: p for p, kids in self.children.items() for c in kids}
+        while parent.get(node_id) is not None:
+            node_id = parent[node_id]
+        return node_id
 
-    def current_leaf(self, done: set[str]) -> str | None:
-        """First leaf in course order that isn't done (None when all are)."""
-        return next((leaf for leaf in self.ordered_leaves() if leaf not in done), None)
+    def current_section(self, done: set[str]) -> str | None:
+        """First top-level section (in course order) that isn't fully done."""
+        return next((t for t in self.children.get(None, []) if not self.leaves_under(t) <= done), None)
 
-    def unlocked_leaves(self, done: set[str]) -> set[str]:
-        current = self.current_leaf(done)
-        return done | ({current} if current else set())
+    def unlocked_sections(self, done: set[str]) -> set[str]:
+        current = self.current_section(done)
+        started = {t for t in self.children.get(None, []) if self.leaves_under(t) & done}
+        return started | ({current} if current else set())
 
     def is_unlocked(self, node_id: str, done: set[str]) -> bool:
-        return bool(self.leaves_under(node_id) & self.unlocked_leaves(done))
+        return self.top_of(node_id) in self.unlocked_sections(done)
 
     def leaves_under(self, node_id: str | None) -> set[str]:
         """Leaf ids in the subtree of node_id (a leaf is its own subtree). None = whole course."""

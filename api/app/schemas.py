@@ -64,8 +64,8 @@ class NodeOut(ORM):
     done: bool | None = None
     leaves_done: int | None = None
     leaves_total: int | None = None
-    # Sequential unlocking: a locked topic can't be opened by the mentee yet;
-    # "current" marks the topic (or the section containing it) to work on now.
+    # Top-level sections unlock in order: a locked topic can't be opened by the
+    # mentee yet; "current" marks the section to work on now.
     locked: bool | None = None
     current: bool | None = None
 

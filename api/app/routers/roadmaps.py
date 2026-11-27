@@ -80,8 +80,7 @@ async def _nodes_out(
 ) -> list[NodeOut]:
     result = []
     if done_leaves is not None:
-        current = tree.current_leaf(done_leaves)
-        unlocked = tree.unlocked_leaves(done_leaves)
+        current = tree.current_section(done_leaves)
     for n in nodes:
         o = NodeOut.model_validate(n)
         o.child_count = len(tree.children.get(n.id, []))
@@ -90,8 +89,8 @@ async def _nodes_out(
             o.leaves_total = len(leaves)
             o.leaves_done = len(leaves & done_leaves)
             o.done = o.leaves_done == o.leaves_total
-            o.locked = not (leaves & unlocked)
-            o.current = current in leaves
+            o.locked = not tree.is_unlocked(n.id, done_leaves)
+            o.current = n.id == current
         result.append(o)
     return result
 

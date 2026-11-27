@@ -19,9 +19,10 @@ api/  FastAPI + SQLAlchemy (async) + LangGraph + Anthropic SDK
   course page), typically after reviewing their solution. Progress counts leaf topics; marking a section
   marks all of its subtopics. A course can be marked completed (this also marks every topic done);
   reopening a topic un-completes it. Both sides see progress bars on the dashboard, course and mentee pages.
-- **Sequential unlocking.** Topics open in course order: a mentee can open the topics already done plus
-  the first one that isn't ("Up next"); later topics are locked (the API returns 403 for them, including
-  submissions) until the mentor marks the current one done.
+- **Sequential unlocking.** Top-level sections open in course order: a mentee can open the sections
+  already started or done plus the first one that isn't fully done ("Up next"); everything inside an
+  open section is available. Later sections are locked (the API returns 403 for them, including
+  submissions) until the mentor marks the current section done.
 - **Roadmap upload.** Markdown or JSON with live tree preview. Headings and nested bullet lists become
   topics; text under an item becomes its description.
 - **Nested routes.** `/roadmaps/:id/:topic/:subtopic/...` — every level is its own page with breadcrumbs
